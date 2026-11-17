@@ -52,6 +52,8 @@
 .compact-card strong{font-size:12px;line-height:1.4}
 .compact-card .status{font-size:10px;padding:2px 4px}
 .compact-card .meta{font-size:10px}
+.post-time{font-size:12px;font-weight:700;color:var(--green)}
+[aria-invalid=true]{border-color:#a33c20}
 .more-day{font-size:11px;padding:4px;min-height:32px}
 .day-agenda{margin-top:32px}
 .day-agenda .section-heading{justify-content:space-between;flex-wrap:wrap}

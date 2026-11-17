@@ -37,6 +37,25 @@ let importCandidate = null;
 let importBaseline = '';
 let importReadToken = 0;
 let importNeedsNoUndo = false;
+let editorSuspended = false;
+let linkCounter = 0;
+let damagedOriginal = null;
+let damagedDownloadStarted = false;
+
+function downloadFile(text, filename, type='text/plain;charset=utf-8') {
+  const url=URL.createObjectURL(new Blob([text],{type}));
+  try {const a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();}
+  finally {setTimeout(()=>URL.revokeObjectURL(url),1000);}
+}
+function downloadEditorText() {
+  const fields=readFields();
+  const headings={title:'Тема',date:'Дата',time:'Время',status:'Статус',category:'Рубрика',format:'Формат',notes:'Заметки',body:'Черновик'};
+  const text=fieldNames.map(key=>headings[key]+':\n'+fields[key]).join('\n\n')+'\n\nМатериалы:\n'+fields.links.map(l=>l.label+'\n'+l.url).join('\n\n');
+  try {downloadFile(text,'planner-unsaved-'+localDate(new Date())+'.txt');message('Введённый текст передан браузеру для скачивания. Сохраните файл.');}
+  catch {if($('editor').open)formError('Не удалось скачать текст. Скопируйте его из формы и не закрывайте страницу.');else message('Не удалось скачать текст. Вернитесь к форме и скопируйте его.',true);}
+}
+function suspendForArchive() {saveDraft();editorSuspended=true;closeEditor();$('suspended-editor').hidden=false;navigate('archive');}
+function resumeEditor() {editorSuspended=false;$('suspended-editor').hidden=true;$('editor').showModal();}
 
 // JSON-копия имеет ту же схему 1, что основное хранилище. Снимок отмены
 // хранится отдельно: {before: <схема 1>, after: <строка JSON после импорта>}.
@@ -83,7 +102,7 @@ function loadImportUndo() {
   updateDataUI();
 }
 function dataError(text) { $('data-error').textContent=text; $('data-error').hidden=false; }
-function downloadError(text) { if($('import-dialog').open)showImportError(text);else dataError(text); }
+function downloadError(text) { if($('import-dialog').open)showImportError(text);else if($('editor').open)formError(text);else dataError(text); }
 function downloadBackup() {
   $('data-error').hidden=true;
   if(storageBlocked){downloadError('Сохранённые данные не удалось прочитать. Экспорт остановлен, чтобы не выдать пустую копию вместо них.');return false;}
@@ -100,17 +119,44 @@ function currentStorageMatches() {
   const raw=localStorage.getItem(STORAGE_KEY);
   return raw===null ? data.posts.length===0 && Object.keys(data.settings).length===0 : JSON.stringify(validateBackup(JSON.parse(raw)))===JSON.stringify(validateBackup(data));
 }
+function prepareDamagedRecovery(candidate) {
+  const raw=localStorage.getItem(STORAGE_KEY);
+  if(raw===null)throw new Error('Исходные данные недоступны. Обновите страницу и повторите восстановление.');
+  damagedOriginal=raw;importCandidate=candidate;damagedDownloadStarted=false;
+  $('confirm-damaged').checked=false;$('confirm-damaged').disabled=true;$('restore-damaged').disabled=true;$('damaged-error').hidden=true;
+  const archived=candidate.posts.filter(p=>p.archivedAt).length;
+  $('damaged-summary').textContent='Исправная копия содержит активных записей: '+(candidate.posts.length-archived)+', архивных: '+archived+'.'+(candidate.posts.length===0?' Внимание: эта копия пустая.':'');
+  $('damaged-dialog').showModal();
+}
+function damagedError(text) {$('damaged-error').textContent=text;$('damaged-error').hidden=false;}
+function downloadDamaged() {
+  try {
+    if(localStorage.getItem(STORAGE_KEY)!==damagedOriginal)throw new Error('Исходные данные изменились. Закройте диалог и обновите страницу.');
+    downloadFile(damagedOriginal,'planner-damaged-original-'+localDate(new Date())+'.txt');
+    damagedDownloadStarted=true;$('confirm-damaged').disabled=false;
+  } catch(error) {damagedError(error.message || 'Не удалось скачать исходное содержимое. Восстановление не выполнено.');}
+}
+function restoreDamaged() {
+  if(!importCandidate || !damagedDownloadStarted || !$('confirm-damaged').checked)return;
+  try {
+    if(localStorage.getItem(STORAGE_KEY)!==damagedOriginal){damagedError('Исходные данные изменились. Восстановление остановлено. Обновите страницу.');return;}
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(importCandidate));
+  } catch {damagedError('Не удалось записать исправную копию. Повреждённый оригинал не изменён. Освободите место или разрешите хранение данных и повторите.');return;}
+  data=importCandidate;storageBlocked=false;importCandidate=null;damagedOriginal=null;damagedDownloadStarted=false;
+  invalidateImportUndo();archiveUndoId=null;$('archive-undo').hidden=true;$('damaged-dialog').close();resetLimits();navigate('data');
+  message('План восстановлен из исправной копии. Исходный файл сохраните отдельно; отмена этой замены недоступна.');
+}
 async function readImport(file) {
   const token=++importReadToken;importCandidate=null;$('data-error').hidden=true;
   if(!file)return;
-  if(storageBlocked){dataError('Основные данные не удалось прочитать. Импорт остановлен, чтобы не перезаписать их.');return;}
-  if(pendingDraft){dataError('Сначала восстановите или удалите незавершённую форму в блоке выше. После этого выберите файл ещё раз.');return;}
+  if(pendingDraft || editorSuspended){dataError('Сначала восстановите или сохраните незавершённую форму либо откажитесь от неё. После этого выберите файл ещё раз.');return;}
   try {
     const text=await file.text();
     if(token!==importReadToken)return;
     let value;
     try {value=JSON.parse(text.replace(/^\uFEFF/,''));}catch {throw new Error('Не удалось прочитать JSON. Выберите корректную резервную копию планировщика.');}
     const candidate=validateBackup(value);
+    if(storageBlocked){prepareDamagedRecovery(candidate);return;}
     if(!currentStorageMatches())throw new Error('Данные изменились в другой вкладке. Обновите страницу перед импортом.');
     importCandidate=candidate;importBaseline=JSON.stringify(data);importNeedsNoUndo=false;
     $('no-undo-label').hidden=true;$('allow-no-undo').checked=false;$('import-error').hidden=true;
@@ -155,7 +201,7 @@ function undoLastImport() {
   try {
     if(localStorage.getItem(STORAGE_KEY)!==importUndo.after){invalidateImportUndo();dataError('После импорта данные изменились. Отмена уже недоступна.');return;}
     localStorage.setItem(STORAGE_KEY,JSON.stringify(importUndo.before));
-  } catch {dataError('Не удалось отменить импорт: браузер не разрешил запись или закончилось место. Текущий план не изменён.');return;}
+  } catch {dataError('Не удалось отменить импорт: браузер не разрешил запись или закончилось место. Текущий план не изменён. Скачайте текущую копию; после этого можно вручную освободить архив и повторить.');return;}
   data=importUndo.before;invalidateImportUndo();archiveUndoId=null;$('archive-undo').hidden=true;resetLimits();renderPosts();message('Импорт отменён. Восстановлен план, который был перед ним.');
 }
 const DEMO = Object.freeze({title:'Пример: почему прибыль есть, а денег нет?',date:'',time:'',status:'Идея',category:'Управленческий учёт',format:'Инструкция',notes:'Демонстрационный пример. Объяснить разницу между прибылью и движением денег на условной ситуации.',body:'Почему прибыль в отчёте ещё не означает свободные деньги на счёте?\n\nВ посте можно разобрать три причины: отсрочки клиентам, закупку запасов и погашение кредита. Завершить вопросом: какие платежи вы планируете заранее?',links:[]});
@@ -200,8 +246,8 @@ function filteredActive(active) {
     else if (from > to) error = 'Начало периода не может быть позже его окончания.';
   } else if (['current','next'].includes(f.period)) {
     const today = new Date(); const offset = f.period === 'next' ? 1 : 0;
-    from = localDate(new Date(today.getFullYear(),today.getMonth()+offset,1));
-    to = localDate(new Date(today.getFullYear(),today.getMonth()+offset+1,0));
+    from = localDate(calendarDate(today.getFullYear(),today.getMonth()+offset,1));
+    to = localDate(calendarDate(today.getFullYear(),today.getMonth()+offset+1,0));
   }
   $('custom-range').hidden = f.period !== 'custom';
   $('filter-error').textContent = error; $('filter-error').hidden = !error;
@@ -219,6 +265,7 @@ function addMore(container, shown, total, onMore) {
 }
 
 function localDate(d) { return [String(d.getFullYear()).padStart(4,'0'), String(d.getMonth()+1).padStart(2,'0'), String(d.getDate()).padStart(2,'0')].join('-'); }
+function calendarDate(year,month,day=1) { const d=new Date(2000,0,1,12);d.setFullYear(year,month,day);return d; }
 function newPostId() {
   // randomUUID недоступен при открытии с телефона по обычному HTTP в локальной сети.
   if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
@@ -238,7 +285,7 @@ function message(text, error = false) {
   $('notice').hidden = false;
 }
 function validDate(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number(value.slice(0,4))<1) return false;
   const d = new Date(value + 'T12:00:00');
   return !Number.isNaN(d.getTime()) && d.getFullYear() === Number(value.slice(0,4)) && d.getMonth() + 1 === Number(value.slice(5,7)) && d.getDate() === Number(value.slice(8,10));
 }
@@ -289,16 +336,30 @@ function addLink(link = {label:'', url:''}) {
   const url = document.createElement('input'); url.type = 'url'; url.dataset.url = ''; url.value = link.url; url.placeholder = 'https://…'; urlLabel.append(url);
   const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Убрать ссылку';
   remove.addEventListener('click', () => { row.remove(); scheduleDraft(); });
-  row.append(label, urlLabel, remove); $('links').append(row);
+  const error=document.createElement('span');error.className='field-error';error.id='link-error-'+(++linkCounter);error.setAttribute('aria-live','polite');
+  url.setAttribute('aria-describedby',error.id);
+  url.addEventListener('input',()=>{if(validURL(url.value.trim()) || !url.value.trim()){error.textContent='';url.removeAttribute('aria-invalid');}});
+  row.append(label, urlLabel, error, remove); $('links').append(row);
+}
+function markLinkErrors() {
+  let first=null;
+  for(const row of $('links').children){
+    const url=row.querySelector('[data-url]'),label=row.querySelector('[data-label]'),error=row.querySelector('.field-error');
+    const invalid=Boolean(url.value.trim() || label.value.trim()) && !validURL(url.value.trim());
+    error.textContent=invalid?'Укажите полный адрес с http:// или https://.':'';
+    if(invalid){url.setAttribute('aria-invalid','true');first ||= url;}else url.removeAttribute('aria-invalid');
+  }
+  return first;
 }
 function syncTime() { $('time').disabled = !$('date').value; if ($('time').disabled) $('time').value = ''; }
 function openEditor(post = null, recovered = false) {
+  if(editorSuspended){resumeEditor();return;}
   if (pendingDraft && !recovered) {
     message('Сначала восстановите или удалите незавершённую форму в блоке выше.');
     $('recovery').scrollIntoView({block:'center'}); return;
   }
   editingId = post?.id || null;
-  form.reset(); $('links').replaceChildren(); $('form-error').hidden = true;
+  form.reset(); $('links').replaceChildren(); $('form-error').hidden = true;$('storage-help').hidden=true;
   $('title-error').textContent = ''; $('title').removeAttribute('aria-invalid');
   fieldNames.forEach(k => { $(k).value = post?.[k] ?? (k === 'status' ? 'Идея' : ''); });
   (post?.links || []).forEach(addLink); syncTime();
@@ -310,7 +371,7 @@ function openEditor(post = null, recovered = false) {
 }
 function saveDraft() {
   clearTimeout(draftTimer);
-  if (!$('editor').open) return;
+  if (!$('editor').open && !editorSuspended) return;
   if (!isDirty()) { clearDraft(); $('draft-state').textContent = 'Изменений нет.'; return; }
   try {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({id: editingId, fields: readFields(), savedAt: new Date().toISOString()}));
@@ -325,7 +386,7 @@ function scheduleDraft() {
 }
 function clearDraft() {
   clearTimeout(draftTimer);
-  try { localStorage.removeItem(DRAFT_KEY); pendingDraft = null; $('recovery').hidden = true; return true; }
+  try { localStorage.removeItem(DRAFT_KEY); pendingDraft = null;editorSuspended=false;$('suspended-editor').hidden=true; $('recovery').hidden = true; return true; }
   catch { message('Не удалось удалить временную копию. При следующем открытии браузер может предложить её повторно.', true); return false; }
 }
 function closeEditor() { clearTimeout(draftTimer); $('editor').close(); }
@@ -340,6 +401,8 @@ function savePost() {
   ['title','category','format'].forEach(k => { values[k] = values[k].trim(); });
   values.links = values.links.filter(l => l.label.trim() || l.url.trim()).map(l => ({label:l.label.trim(), url:l.url.trim()}));
   if (!values.title) { $('title-error').textContent = 'Укажите тему публикации.'; $('title').setAttribute('aria-invalid','true'); $('title').focus(); return false; }
+  const badLink=markLinkErrors();
+  if(badLink){formError('Исправьте отмеченную ссылку.');badLink.focus();return false;}
   if (!validFields(values)) { formError('Проверьте дату, время и ссылки. Для материалов нужен полный адрес с http:// или https://.'); return false; }
   if (storageBlocked) { formError('Сохранение недоступно: прежние данные не удалось прочитать. Они не будут перезаписаны.'); saveDraft(); return false; }
   const previous = data.posts.find(p => p.id === editingId);
@@ -348,7 +411,7 @@ function savePost() {
   const next = {...data, posts: previous ? data.posts.map(p => p.id === post.id ? post : p) : [...data.posts, post]};
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
   catch {
-    saveDraft(); formError('Публикация не сохранена: браузер не разрешил запись или закончилось место. Введённый текст остаётся в форме.'); return false;
+    saveDraft();$('storage-help').hidden=false; formError('Публикация не сохранена: браузер не разрешил запись или закончилось место. Введённый текст остаётся в форме. Скачайте копию и текст, затем освободите архив и повторите сохранение.'); return false;
   }
   data = next; invalidateImportUndo(); const removed = clearDraft(); closeEditor(); renderPosts();
   if (removed) message('Публикация сохранена в этом браузере.');
@@ -359,8 +422,9 @@ function postCard(post, compact = false) {
     button.dataset.postId = post.id;
     const status = document.createElement('span'); status.className = 'status'; status.textContent = post.status;
     const title = document.createElement('strong'); title.textContent = post.title;
-    const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = [displayDate(post.date), post.time, post.category].filter(Boolean).join(' · ');
+    const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = [displayDate(post.date), compact?'':post.time, post.category].filter(Boolean).join(' · ');
     button.append(status,title,meta); button.addEventListener('click', () => viewPost(post.id));
+    if(compact && post.time){const time=document.createElement('span');time.className='post-time';time.textContent=post.time;button.append(time);}
     const due = dueState(post);
     if(due){const label=document.createElement('span');label.className='due-label '+due;label.textContent=due==='overdue'?'Просрочено':'Ближайшая';button.append(label);}
     button.draggable = !post.archivedAt;
@@ -424,10 +488,11 @@ function renderCalendar(posts) {
   $('month-title').textContent = calendarMonth.toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
   const year = calendarMonth.getFullYear(), month = calendarMonth.getMonth();
   const offset = (calendarMonth.getDay()+6)%7;
-  const days = new Date(year,month+1,0).getDate();
+  const days = calendarDate(year,month+1,0).getDate();
+  $('prev-month').disabled=year===1 && month===0;$('next-month').disabled=year===9999 && month===11;
   for (let i=0;i<offset;i++) { const blank = document.createElement('div'); blank.className='calendar-blank'; $('calendar-grid').append(blank); }
   for (let day=1;day<=days;day++) {
-    const date = localDate(new Date(year,month,day));
+    const date = localDate(calendarDate(year,month,day));
     const dayPosts = posts.filter(p=>p.date===date);
     const cell = document.createElement('div'); cell.className='calendar-day'; cell.dataset.date=date;
     if(date === selectedDay) cell.classList.add('selected');
@@ -486,7 +551,7 @@ function applyChange() {
   if(field==='date' && !value)updated.time='';
   const next={...data,posts:data.posts.map(p=>p.id===id?updated:p)};
   try {if(storageBlocked)throw new Error('Недоступно');localStorage.setItem(STORAGE_KEY,JSON.stringify(next));}
-  catch{$('change-error').textContent='Изменение не сохранено. Браузер не разрешил запись или закончилось место. Прежние данные сохранены.';$('change-error').hidden=false;return;}
+  catch{$('change-error').textContent='Изменение не сохранено. Браузер не разрешил запись или закончилось место. Прежние данные сохранены. Скачайте резервную копию в разделе данных, затем вручную освободите архив и повторите.';$('change-error').hidden=false;return;}
   data=next;invalidateImportUndo();$('change-dialog').close();changeRequest=null;
   if(field==='date' && value){selectedDay=value;calendarMonth=new Date(value+'T12:00:00');calendarMonth.setDate(1);}
   renderPosts();message('Изменение сохранено в этом браузере.');
@@ -510,7 +575,7 @@ function viewPost(id) {
 function saveArchiveAction(next, errorElement) {
   try { if(storageBlocked)throw new Error('Недоступно'); localStorage.setItem(STORAGE_KEY,JSON.stringify(next)); }
   catch {
-    const text='Изменение не сохранено: браузер не разрешил запись или закончилось место. Прежние данные сохранены.';
+    const text='Изменение не сохранено: браузер не разрешил запись или закончилось место. Прежние данные сохранены. Скачайте резервную копию в разделе данных; после этого можно вручную удалить ненужные записи из архива и повторить.';
     if(errorElement){errorElement.textContent=text;errorElement.hidden=false;}else message(text,true);
     return false;
   }
@@ -554,8 +619,17 @@ function navigate(section) {
 }
 // Импорт и экспорт выполняются локально. Файлы не отправляются по сети.
 $('export-data').addEventListener('click',downloadBackup);$('export-before-import').addEventListener('click',downloadBackup);
+$('export-editor-backup').addEventListener('click',downloadBackup);
+$('download-editor-text').addEventListener('click',downloadEditorText);$('download-suspended-text').addEventListener('click',downloadEditorText);
+$('pause-for-archive').addEventListener('click',suspendForArchive);$('resume-editor').addEventListener('click',resumeEditor);
+document.querySelectorAll('input[type=date]').forEach(input=>{input.min='0001-01-01';input.max='9999-12-31';});
 $('import-file').addEventListener('change',e=>{const file=e.target.files[0];e.target.value='';readImport(file);});
 $('confirm-import').addEventListener('click',applyImport);
+$('download-damaged').addEventListener('click',downloadDamaged);$('restore-damaged').addEventListener('click',restoreDamaged);
+$('confirm-damaged').addEventListener('change',()=>{$('restore-damaged').disabled=!(damagedDownloadStarted && $('confirm-damaged').checked);});
+function cancelDamaged() {importCandidate=null;damagedOriginal=null;damagedDownloadStarted=false;++importReadToken;}
+$('cancel-damaged').addEventListener('click',()=>{cancelDamaged();$('damaged-dialog').close();});
+$('damaged-dialog').addEventListener('cancel',cancelDamaged);
 $('cancel-import').addEventListener('click',()=>{importCandidate=null;++importReadToken;$('import-dialog').close();});
 $('import-dialog').addEventListener('cancel',()=>{importCandidate=null;++importReadToken;});
 $('undo-import').addEventListener('click',undoLastImport);
@@ -581,7 +655,7 @@ $('change-date').addEventListener('click',()=>openChange(viewedId,'date'));
 $('change-status').addEventListener('click',()=>openChange(viewedId,'status'));
 $('cancel-change').addEventListener('click',()=>{$('change-dialog').close();changeRequest=null;});
 $('change-form').addEventListener('submit',e=>{e.preventDefault();applyChange();});
-function shiftMonth(amount) {calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+amount,1);selectedDay=localDate(calendarMonth);dayLimit=PAGE_SIZE;renderPosts();}
+function shiftMonth(amount) {const next=calendarDate(calendarMonth.getFullYear(),calendarMonth.getMonth()+amount);if(next.getFullYear()<1 || next.getFullYear()>9999)return;calendarMonth=next;selectedDay=localDate(calendarMonth);dayLimit=PAGE_SIZE;renderPosts();}
 $('prev-month').addEventListener('click',()=>shiftMonth(-1));$('next-month').addEventListener('click',()=>shiftMonth(1));
 $('calendar-today').addEventListener('click',()=>{const now=new Date();calendarMonth=new Date(now.getFullYear(),now.getMonth(),1);selectedDay=localDate(now);dayLimit=PAGE_SIZE;renderPosts();});
 $('day-create').addEventListener('click',()=>createForDate(selectedDay));
