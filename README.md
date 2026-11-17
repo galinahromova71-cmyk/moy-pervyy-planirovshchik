@@ -2,6 +2,8 @@
 
 Личный планировщик контента для Telegram. Работает на HTML, CSS и JavaScript, хранит записи в браузере через localStorage.
 
+Адрес сайта: [открыть планировщик](https://galinahromova71-cmyk.github.io/moy-pervyy-planirovshchik/).
+
 ## Возможности
 
 - Идеи без даты, план по дням, месячный календарь и доска статусов.
