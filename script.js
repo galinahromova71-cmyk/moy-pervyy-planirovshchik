@@ -4,6 +4,7 @@
 // notes,body,links:[{label,url}],createdAt,updatedAt,archivedAt}], settings: {}}.
 const STORAGE_KEY = 'planner_data';
 const DRAFT_KEY = 'planner_editor_draft';
+const IMPORT_UNDO_KEY = 'planner_import_undo';
 const CONFIG = Object.freeze({
   statuses: ['Идея', 'В работе', 'Готово', 'Опубликовано'],
   categories: ['Бухгалтерия', 'Управленческий учёт', 'Бюджетирование', 'Финансовый директор (CFO)', 'Бизнес и финансы', 'Практика и кейсы'],
@@ -31,6 +32,146 @@ let boardLimits = Object.fromEntries(CONFIG.statuses.map(s => [s, PAGE_SIZE]));
 let archiveUndoId = null;
 let deleteId = null;
 let renderedToday = localDate(new Date());
+let importUndo = null;
+let importCandidate = null;
+let importBaseline = '';
+let importReadToken = 0;
+let importNeedsNoUndo = false;
+
+// JSON-копия имеет ту же схему 1, что основное хранилище. Снимок отмены
+// хранится отдельно: {before: <схема 1>, after: <строка JSON после импорта>}.
+// after позволяет не применить устаревшую отмену после сохранённых изменений.
+function validTimestamp(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  try { return new Date(value).toISOString() === value; } catch { return false; }
+}
+function validateBackup(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Файл должен содержать JSON-копию планировщика.');
+  if (value.schemaVersion !== 1) throw new Error('Эта версия формата не поддерживается. Выберите копию формата 1.');
+  if (!Array.isArray(value.posts) || !value.settings || typeof value.settings !== 'object' || Array.isArray(value.settings)) throw new Error('В файле отсутствуют записи или настройки нужного формата.');
+  if ('welcomeDismissed' in value.settings && typeof value.settings.welcomeDismissed !== 'boolean') throw new Error('Некорректные настройки в файле.');
+  const ids = new Set();
+  value.posts.forEach((p,index) => {
+    if (!validFields(p) || typeof p.id !== 'string' || !p.id.trim() || !validTimestamp(p.createdAt) || !validTimestamp(p.updatedAt) || !(p.archivedAt === null || validTimestamp(p.archivedAt))) throw new Error('Некорректные поля публикации № '+(index+1)+'. Проверьте тему, дату, время, статус, ссылки и служебные даты.');
+    if(ids.has(p.id)) throw new Error('В файле повторяются идентификаторы публикаций. Импорт отменён.');
+    ids.add(p.id);
+  });
+  return {schemaVersion:1,posts:value.posts.map(p=>({...Object.fromEntries(fieldNames.map(k=>[k,p[k]])),id:p.id,createdAt:p.createdAt,updatedAt:p.updatedAt,archivedAt:p.archivedAt,links:p.links.map(l=>({label:l.label,url:l.url}))})),settings:JSON.parse(JSON.stringify(value.settings))};
+}
+function updateDataUI() {
+  const archived=data.posts.filter(p=>p.archivedAt).length;
+  $('data-counts').textContent='Активных записей: '+(data.posts.length-archived)+'. В архиве: '+archived+'.';
+  $('undo-import').disabled=!importUndo;
+  $('welcome').hidden=Boolean(data.settings.welcomeDismissed) || storageBlocked;
+}
+function invalidateImportUndo() {
+  importUndo=null;
+  try {localStorage.removeItem(IMPORT_UNDO_KEY);} catch { /* После перезапуска несовпадающий after также блокирует отмену. */ }
+  updateDataUI();
+}
+function loadImportUndo() {
+  importUndo=null;
+  try {
+    const raw=localStorage.getItem(IMPORT_UNDO_KEY);
+    if(raw && !storageBlocked){
+      const snapshot=JSON.parse(raw);
+      const before=validateBackup(snapshot.before);
+      if(typeof snapshot.after==='string' && snapshot.after===localStorage.getItem(STORAGE_KEY))importUndo={before,after:snapshot.after};
+      else localStorage.removeItem(IMPORT_UNDO_KEY);
+    }
+  } catch { /* Некорректный снимок не даёт права изменять основные данные. */ }
+  updateDataUI();
+}
+function dataError(text) { $('data-error').textContent=text; $('data-error').hidden=false; }
+function downloadError(text) { if($('import-dialog').open)showImportError(text);else dataError(text); }
+function downloadBackup() {
+  $('data-error').hidden=true;
+  if(storageBlocked){downloadError('Сохранённые данные не удалось прочитать. Экспорт остановлен, чтобы не выдать пустую копию вместо них.');return false;}
+  let url;
+  try {
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json;charset=utf-8'});
+    url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download='planner-backup-'+localDate(new Date())+'.json';document.body.append(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    message('Браузер получил резервную копию для скачивания. Сохраните файл в надёжном месте.');return true;
+  } catch {if(url)URL.revokeObjectURL(url);downloadError('Не удалось подготовить файл. Попробуйте скачать копию ещё раз.');return false;}
+}
+function currentStorageMatches() {
+  const raw=localStorage.getItem(STORAGE_KEY);
+  return raw===null ? data.posts.length===0 && Object.keys(data.settings).length===0 : JSON.stringify(validateBackup(JSON.parse(raw)))===JSON.stringify(validateBackup(data));
+}
+async function readImport(file) {
+  const token=++importReadToken;importCandidate=null;$('data-error').hidden=true;
+  if(!file)return;
+  if(storageBlocked){dataError('Основные данные не удалось прочитать. Импорт остановлен, чтобы не перезаписать их.');return;}
+  if(pendingDraft){dataError('Сначала восстановите или удалите незавершённую форму в блоке выше. После этого выберите файл ещё раз.');return;}
+  try {
+    const text=await file.text();
+    if(token!==importReadToken)return;
+    let value;
+    try {value=JSON.parse(text.replace(/^\uFEFF/,''));}catch {throw new Error('Не удалось прочитать JSON. Выберите корректную резервную копию планировщика.');}
+    const candidate=validateBackup(value);
+    if(!currentStorageMatches())throw new Error('Данные изменились в другой вкладке. Обновите страницу перед импортом.');
+    importCandidate=candidate;importBaseline=JSON.stringify(data);importNeedsNoUndo=false;
+    $('no-undo-label').hidden=true;$('allow-no-undo').checked=false;$('import-error').hidden=true;
+    const archived=candidate.posts.filter(p=>p.archivedAt).length;
+    $('import-summary').textContent='Будет загружено: активных записей — '+(candidate.posts.length-archived)+', архивных — '+archived+'. Сейчас в планировщике: '+data.posts.length+' записей.'+(candidate.posts.length===0?' Внимание: выбранная копия пустая.':'');
+    $('import-dialog').showModal();
+  } catch(error) {if(token===importReadToken)dataError(error instanceof Error ? error.message : 'Файл не удалось прочитать. Текущие записи не изменены.');}
+}
+function showImportError(text) {$('import-error').textContent=text;$('import-error').hidden=false;}
+function applyImport() {
+  if(!importCandidate)return;
+  try {if(importBaseline!==JSON.stringify(data) || !currentStorageMatches())throw new Error();}
+  catch {showImportError('Текущие данные изменились или недоступны. Закройте диалог и обновите страницу. Импорт не выполнен.');return;}
+  let oldUndo;
+  try {oldUndo=localStorage.getItem(IMPORT_UNDO_KEY);}catch {showImportError('Браузер не разрешил доступ к хранилищу. Импорт не выполнен.');return;}
+  const after=JSON.stringify(importCandidate);
+  const snapshot={before:data,after};
+  const withoutUndo=importNeedsNoUndo && $('allow-no-undo').checked;
+  if(importNeedsNoUndo && !withoutUndo){showImportError('Сначала скачайте текущую копию и подтвердите замену без отмены или нажмите «Отмена».');return;}
+  if(!withoutUndo){
+    try {localStorage.setItem(IMPORT_UNDO_KEY,JSON.stringify(snapshot));}
+    catch {
+      importNeedsNoUndo=true;$('no-undo-label').hidden=false;
+      showImportError('Не удалось сохранить снимок отмены: возможно, закончилось место. Данные ещё не заменены. Скачайте текущую копию. Продолжить без отмены можно только после отдельного подтверждения ниже.');return;
+    }
+  } else {
+    try {localStorage.removeItem(IMPORT_UNDO_KEY);}catch {showImportError('Не удалось подготовить хранилище. Импорт не выполнен.');return;}
+  }
+  try {localStorage.setItem(STORAGE_KEY,after);}
+  catch {
+    try {if(oldUndo===null)localStorage.removeItem(IMPORT_UNDO_KEY);else localStorage.setItem(IMPORT_UNDO_KEY,oldUndo);}catch { /* Основной набор остался прежним, возможность отмены проверяется заново. */ }
+    loadImportUndo();showImportError('Импорт не сохранён: браузер не разрешил запись или закончилось место. Ваш прежний план не изменён.');return;
+  }
+  data=importCandidate;importUndo=withoutUndo?null:snapshot;importCandidate=null;archiveUndoId=null;$('archive-undo').hidden=true;
+  $('import-dialog').close();$('import-file').value='';
+  resetLimits();renderPosts();updateDataUI();
+  message(withoutUndo?'Данные заменены. Отмена этого импорта недоступна.':'Данные заменены. Последний импорт можно отменить до следующего сохранённого изменения.');
+}
+function undoLastImport() {
+  $('data-error').hidden=true;
+  if(!importUndo)return;
+  try {
+    if(localStorage.getItem(STORAGE_KEY)!==importUndo.after){invalidateImportUndo();dataError('После импорта данные изменились. Отмена уже недоступна.');return;}
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(importUndo.before));
+  } catch {dataError('Не удалось отменить импорт: браузер не разрешил запись или закончилось место. Текущий план не изменён.');return;}
+  data=importUndo.before;invalidateImportUndo();archiveUndoId=null;$('archive-undo').hidden=true;resetLimits();renderPosts();message('Импорт отменён. Восстановлен план, который был перед ним.');
+}
+const DEMO = Object.freeze({title:'Пример: почему прибыль есть, а денег нет?',date:'',time:'',status:'Идея',category:'Управленческий учёт',format:'Инструкция',notes:'Демонстрационный пример. Объяснить разницу между прибылью и движением денег на условной ситуации.',body:'Почему прибыль в отчёте ещё не означает свободные деньги на счёте?\n\nВ посте можно разобрать три причины: отсрочки клиентам, закупку запасов и погашение кредита. Завершить вопросом: какие платежи вы планируете заранее?',links:[]});
+function openDemo() {
+  $('demo-content').replaceChildren();$('demo-error').hidden=true;
+  [['Тема',DEMO.title],['Дата','Не назначена'],['Статус',DEMO.status],['Рубрика',DEMO.category],['Формат',DEMO.format],['Заметки',DEMO.notes],['Черновик',DEMO.body]].forEach(([title,text])=>{const h=document.createElement('h3');h.textContent=title;const p=document.createElement('p');p.textContent=text;$('demo-content').append(h,p);});
+  $('demo-dialog').showModal();
+}
+function addDemo() {
+  const now=new Date().toISOString();const post={...DEMO,links:[],id:crypto.randomUUID(),createdAt:now,updatedAt:now,archivedAt:null};
+  if(!saveArchiveAction({...data,posts:[...data.posts,post]},$('demo-error')))return;
+  $('demo-dialog').close();$('reset-filters').click();navigate('ideas');message('Пример добавлен в ваши идеи. Его можно редактировать или отправить в архив.');
+}
+function dismissWelcome() {
+  if(saveArchiveAction({...data,settings:{...data.settings,welcomeDismissed:true}},null))updateDataUI();
+}
 
 function resetLimits() {
   listLimit = PAGE_SIZE; dayLimit = PAGE_SIZE;
@@ -106,11 +247,7 @@ function loadData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw !== null) {
-      const parsed = JSON.parse(raw);
-      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.posts) || !parsed.settings || typeof parsed.settings !== 'object' ||
-        !parsed.posts.every(p => validFields(p) && typeof p.id === 'string' && p.id && typeof p.createdAt === 'string' && typeof p.updatedAt === 'string' && (p.archivedAt === null || typeof p.archivedAt === 'string')) ||
-        new Set(parsed.posts.map(p => p.id)).size !== parsed.posts.length) throw new Error('Некорректные данные');
-      data = parsed;
+      data = validateBackup(JSON.parse(raw));
     }
   } catch {
     storageBlocked = true;
@@ -205,7 +342,7 @@ function savePost() {
   catch {
     saveDraft(); formError('Публикация не сохранена: браузер не разрешил запись или закончилось место. Введённый текст остаётся в форме.'); return false;
   }
-  data = next; const removed = clearDraft(); closeEditor(); renderPosts();
+  data = next; invalidateImportUndo(); const removed = clearDraft(); closeEditor(); renderPosts();
   if (removed) message('Публикация сохранена в этом браузере.');
   return true;
 }
@@ -342,7 +479,7 @@ function applyChange() {
   const next={...data,posts:data.posts.map(p=>p.id===id?updated:p)};
   try {if(storageBlocked)throw new Error('Недоступно');localStorage.setItem(STORAGE_KEY,JSON.stringify(next));}
   catch{$('change-error').textContent='Изменение не сохранено. Браузер не разрешил запись или закончилось место. Прежние данные сохранены.';$('change-error').hidden=false;return;}
-  data=next;$('change-dialog').close();changeRequest=null;
+  data=next;invalidateImportUndo();$('change-dialog').close();changeRequest=null;
   if(field==='date' && value){selectedDay=value;calendarMonth=new Date(value+'T12:00:00');calendarMonth.setDate(1);}
   renderPosts();message('Изменение сохранено в этом браузере.');
   if($('viewer').open)viewPost(id);
@@ -369,7 +506,7 @@ function saveArchiveAction(next, errorElement) {
     if(errorElement){errorElement.textContent=text;errorElement.hidden=false;}else message(text,true);
     return false;
   }
-  data=next;return true;
+  data=next;invalidateImportUndo();return true;
 }
 function archivePost() {
   const post=data.posts.find(p=>p.id===viewedId && !p.archivedAt);if(!post)return;
@@ -400,14 +537,23 @@ function navigate(section) {
   currentSection = section;resetLimits();
   $('page-title').textContent = sections[section];
   document.querySelectorAll('[data-section]').forEach(b => { b.removeAttribute('aria-current'); if (b.dataset.section === section) b.setAttribute('aria-current','page'); });
-  $('posts-section').hidden = !['plan','ideas','archive'].includes(section); $('more-menu').hidden = section !== 'more'; $('placeholder').hidden = ['plan','ideas','archive','calendar','statuses','more'].includes(section);
+  $('posts-section').hidden = !['plan','ideas','archive'].includes(section); $('more-menu').hidden = section !== 'more';
+  $('help-section').hidden=section!=='help';$('data-section').hidden=section!=='data';
   $('calendar-section').hidden=section!=='calendar';$('board-section').hidden=section!=='statuses';
   $('filter-panel').hidden=!['plan','ideas','calendar','statuses'].includes(section);$('summary').hidden=section!=='plan';$('archive-search-panel').hidden=section!=='archive';
   $('page-subtitle').textContent = {plan:'Публикации по датам. Поиск и фильтры охватывают также идеи без даты.',ideas:'Сначала мысль, потом дата. Здесь все записи без дня публикации.',calendar:'Ваш контент в ритме месяца.',statuses:'От первой идеи до опубликованного поста.',archive:'Записи вне активного плана. Их можно восстановить.'}[section] || 'Дополнительные разделы планировщика.';
-  $('placeholder-title').textContent = sections[section];
-  $('placeholder-text').textContent = 'Этот раздел появится на следующих шагах разработки. Публикации уже можно создавать, просматривать и редактировать в разделе «План».';
-  renderPosts();
+  renderPosts();updateDataUI();
 }
+// Импорт и экспорт выполняются локально. Файлы не отправляются по сети.
+$('export-data').addEventListener('click',downloadBackup);$('export-before-import').addEventListener('click',downloadBackup);
+$('import-file').addEventListener('change',e=>{const file=e.target.files[0];e.target.value='';readImport(file);});
+$('confirm-import').addEventListener('click',applyImport);
+$('cancel-import').addEventListener('click',()=>{importCandidate=null;++importReadToken;$('import-dialog').close();});
+$('import-dialog').addEventListener('cancel',()=>{importCandidate=null;++importReadToken;});
+$('undo-import').addEventListener('click',undoLastImport);
+$('welcome-example').addEventListener('click',openDemo);$('help-example').addEventListener('click',openDemo);
+$('welcome-help').addEventListener('click',()=>navigate('help'));$('dismiss-welcome').addEventListener('click',dismissWelcome);
+$('close-demo').addEventListener('click',()=>$('demo-dialog').close());$('add-demo').addEventListener('click',addDemo);
 fillSelect('status', CONFIG.statuses, false); fillSelect('category', CONFIG.categories, true); fillSelect('format', CONFIG.formats, true);
 fillSelect('new-status',CONFIG.statuses,false);
 fillSelect('filter-status',CONFIG.statuses,true);fillSelect('filter-category',CONFIG.categories,true);fillSelect('filter-format',CONFIG.formats,true);
@@ -457,4 +603,4 @@ window.addEventListener('pagehide', saveDraft);
 function refreshDay() {if(localDate(new Date())!==renderedToday)renderPosts();}
 setInterval(refreshDay,60000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refreshDay();});
-loadData(); renderPosts();
+loadData(); loadImportUndo(); renderPosts();

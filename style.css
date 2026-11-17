@@ -4,6 +4,16 @@
 @media(max-width:370px){.form-grid{grid-template-columns:1fr;gap:0}.sidebar nav button{font-size:11px}main{padding-left:12px;padding-right:12px}}
 
 /* План, календарь и доска статусов. */
+.info-panel{background:#fff;border:1px solid var(--border);border-radius:16px;padding:24px;margin:24px 0;overflow-wrap:anywhere}
+.info-panel li{line-height:1.7;padding-bottom:16px}.info-panel ol{padding-left:22px}
+.storage-hint{background:#edf1e7;padding:16px;border-radius:10px;font-size:14px}
+.file-label{display:block;font-weight:600;margin:24px 0 10px}.file-label input{display:block;margin-top:12px;font-weight:400;max-width:100%}
+.info-panel hr{border:0;border-top:1px solid var(--border);margin:24px 0}
+.check-label{display:flex;align-items:flex-start;gap:12px;line-height:1.5;margin-top:20px}
+.check-label input{width:24px;min-width:24px;min-height:24px;margin:0}
+#demo-content p{white-space:pre-wrap;line-height:1.6}#demo-content h3{font-size:14px;color:var(--muted);margin-top:24px}
+#import-error{margin-top:18px}#import-summary{overflow-wrap:anywhere}
+@media(max-width:760px){.info-panel{padding:18px}.info-panel .actions{display:grid}.info-panel .actions button{width:100%}.file-label input{font-size:14px}#import-dialog .form-footer{flex-wrap:wrap}}
 .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:20px 0}
 .summary div{background:#edf1e7;border-radius:12px;padding:16px;font-size:13px;color:var(--muted)}
 .summary strong{display:block;margin-top:8px;font-size:26px;color:var(--green)}
