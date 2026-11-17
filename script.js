@@ -19,6 +19,17 @@ let viewedId = null;
 let baseline = '';
 let draftTimer;
 let pendingDraft = null;
+let currentSection = 'plan';
+let calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let selectedDay = localDate(new Date());
+let boardStatus = 'Идея';
+let changeRequest = null;
+
+function localDate(d) { return [String(d.getFullYear()).padStart(4,'0'), String(d.getMonth()+1).padStart(2,'0'), String(d.getDate()).padStart(2,'0')].join('-'); }
+function displayDate(value) { return value ? value.split('-').reverse().join('.') : 'Без даты'; }
+function sortedPosts(posts) {
+  return [...posts].sort((a,b) => (a.date || '9999-99-99').localeCompare(b.date || '9999-99-99') || (a.time || '99:99').localeCompare(b.time || '99:99') || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
 
 function message(text, error = false) {
   $('notice').textContent = text;
@@ -146,17 +157,124 @@ function savePost() {
   if (removed) message('Публикация сохранена в этом браузере.');
   return true;
 }
-function renderPosts() {
-  $('posts').replaceChildren();
-  const posts = data.posts.filter(p => !p.archivedAt);
-  $('post-count').textContent = posts.length; $('empty').hidden = posts.length > 0;
-  posts.forEach(post => {
-    const button = document.createElement('button'); button.className = 'post-card';
+function postCard(post, compact = false) {
+    const button = document.createElement('button'); button.className = compact ? 'post-card compact-card' : 'post-card';
+    button.dataset.postId = post.id;
     const status = document.createElement('span'); status.className = 'status'; status.textContent = post.status;
     const title = document.createElement('strong'); title.textContent = post.title;
-    const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = [post.date ? post.date.split('-').reverse().join('.') : 'Без даты', post.time, post.category].filter(Boolean).join(' · ');
-    button.append(status,title,meta); button.addEventListener('click', () => viewPost(post.id)); $('posts').append(button);
+    const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = [displayDate(post.date), post.time, post.category].filter(Boolean).join(' · ');
+    button.append(status,title,meta); button.addEventListener('click', () => viewPost(post.id));
+    button.draggable = true;
+    button.addEventListener('dragstart', e => { e.dataTransfer.setData('application/x-planner-post', post.id); e.dataTransfer.effectAllowed = 'move'; });
+    return button;
+}
+function dropTarget(element, field, value) {
+  element.addEventListener('dragover', e => {
+    if (!Array.from(e.dataTransfer.types).includes('application/x-planner-post')) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move'; element.classList.add('drop-target');
   });
+  element.addEventListener('dragleave', () => element.classList.remove('drop-target'));
+  element.addEventListener('drop', e => {
+    e.preventDefault(); element.classList.remove('drop-target');
+    const post = data.posts.find(p => p.id === e.dataTransfer.getData('application/x-planner-post') && !p.archivedAt);
+    if (post && post[field] !== value) openChange(post.id,field,value);
+  });
+}
+function renderPosts() {
+  const active = sortedPosts(data.posts.filter(p => !p.archivedAt));
+  const posts = active.filter(p => currentSection === 'ideas' ? !p.date : p.date);
+  $('posts').replaceChildren(); $('ideas-shortcut').replaceChildren();
+  $('list-title').textContent = currentSection === 'ideas' ? 'Идеи без даты' : 'Публикации по датам';
+  $('post-count').textContent = posts.length; $('empty').hidden = posts.length > 0;
+  $('empty-title').textContent = currentSection === 'ideas' ? 'Место для новых идей' : 'План пока свободен';
+  $('empty-text').textContent = currentSection === 'ideas' ? 'Сохраните тему сейчас, а день публикации выберите позже.' : 'Добавьте публикацию с датой или назначьте дату сохранённой идее.';
+  if (currentSection !== 'ideas') {
+    const shortcut = document.createElement('button'); shortcut.className = 'ideas-link';
+    shortcut.textContent = 'Идеи без даты: ' + active.filter(p=>!p.date).length;
+    shortcut.addEventListener('click',()=>navigate('ideas')); $('ideas-shortcut').append(shortcut);
+  }
+  let group;
+  let lastDate = null;
+  posts.forEach(post => {
+    if (lastDate !== post.date || !group) {
+      const heading = document.createElement('h3'); heading.className = 'date-heading'; heading.textContent = displayDate(post.date);
+      group = document.createElement('div'); group.className = 'cards';
+      if (post.date) $('posts').append(heading);
+      $('posts').append(group); lastDate = post.date;
+    }
+    group.append(postCard(post));
+  });
+  renderCalendar(active); renderBoard(active);
+}
+function createForDate(date) { openEditor({date}); }
+function renderCalendar(posts) {
+  $('calendar-grid').replaceChildren();
+  $('month-title').textContent = calendarMonth.toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
+  const year = calendarMonth.getFullYear(), month = calendarMonth.getMonth();
+  const offset = (calendarMonth.getDay()+6)%7;
+  const days = new Date(year,month+1,0).getDate();
+  for (let i=0;i<offset;i++) { const blank = document.createElement('div'); blank.className='calendar-blank'; $('calendar-grid').append(blank); }
+  for (let day=1;day<=days;day++) {
+    const date = localDate(new Date(year,month,day));
+    const dayPosts = posts.filter(p=>p.date===date);
+    const cell = document.createElement('div'); cell.className='calendar-day'; cell.dataset.date=date;
+    if(date === selectedDay) cell.classList.add('selected');
+    if(date === localDate(new Date())) cell.classList.add('today');
+    const choose = document.createElement('button'); choose.className='day-number'; choose.textContent=day;
+    choose.setAttribute('aria-label',displayDate(date) + ', публикаций: ' + dayPosts.length);
+    choose.setAttribute('aria-pressed',String(date===selectedDay));
+    choose.addEventListener('click',()=>{selectedDay=date;renderCalendar(posts);if(!dayPosts.length)createForDate(date);});
+    cell.append(choose);
+    const count = document.createElement('span'); count.className='day-count';count.textContent=dayPosts.length ? dayPosts.length : ''; cell.append(count);
+    const dayCards = document.createElement('div');dayCards.className='calendar-cards';
+    dayPosts.slice(0,3).forEach(p=>dayCards.append(postCard(p,true)));
+    if(dayPosts.length>3){const more=document.createElement('button');more.className='more-day';more.textContent='Ещё '+(dayPosts.length-3);more.addEventListener('click',()=>{selectedDay=date;renderCalendar(posts);$('day-title').scrollIntoView({block:'nearest'});});dayCards.append(more);}
+    cell.append(dayCards);dropTarget(cell,'date',date);$('calendar-grid').append(cell);
+  }
+  $('day-title').textContent='Публикации на '+displayDate(selectedDay);
+  $('day-posts').replaceChildren();
+  const selectedPosts=posts.filter(p=>p.date===selectedDay);
+  selectedPosts.forEach(p=>$('day-posts').append(postCard(p)));
+  if(!selectedPosts.length){const hint=document.createElement('p');hint.className='hint';hint.textContent='На этот день публикаций пока нет.';$('day-posts').append(hint);}
+}
+function renderBoard(posts) {
+  $('board').replaceChildren();$('board-tabs').replaceChildren();
+  CONFIG.statuses.forEach(status=>{
+    const items=posts.filter(p=>p.status===status);
+    const tab=document.createElement('button');tab.textContent=status+' · '+items.length;tab.setAttribute('aria-pressed',String(status===boardStatus));
+    tab.addEventListener('click',()=>{boardStatus=status;renderBoard(posts);});$('board-tabs').append(tab);
+    const column=document.createElement('section');column.className='board-column';column.dataset.status=status;column.classList.toggle('active-column',status===boardStatus);
+    const heading=document.createElement('h2');heading.textContent=status+' · '+items.length;column.append(heading);
+    items.forEach(p=>column.append(postCard(p)));
+    if(!items.length){const empty=document.createElement('p');empty.className='hint';empty.textContent='Публикаций пока нет.';column.append(empty);}
+    dropTarget(column,'status',status);$('board').append(column);
+  });
+}
+function openChange(id,field,value) {
+  const post=data.posts.find(p=>p.id===id);if(!post)return;
+  changeRequest={id,field};$('change-title').textContent=field==='date'?'Изменить дату':'Изменить статус';
+  $('change-summary').textContent=post.title+' · Сейчас: '+(field==='date'?displayDate(post.date):post.status);
+  $('change-date-label').hidden=field!=='date';$('change-status-label').hidden=field!=='status';
+  $('new-date').value=field==='date'?(value ?? post.date):'';
+  $('new-status').value=field==='status'?(value ?? post.status):'Идея';
+  $('confirm-change').textContent=field==='date'?'Перенести':'Изменить статус';
+  $('change-error').hidden=true;$('change-dialog').showModal();
+}
+function applyChange() {
+  if(!changeRequest)return;
+  const {id,field}=changeRequest;
+  const value=field==='date'?$('new-date').value:$('new-status').value;
+  if((field==='date' && value && !validDate(value)) || (field==='status' && !CONFIG.statuses.includes(value)))return;
+  const previous=data.posts.find(p=>p.id===id);if(!previous)return;
+  const updated={...previous,[field]:value,updatedAt:new Date().toISOString()};
+  if(field==='date' && !value)updated.time='';
+  const next={...data,posts:data.posts.map(p=>p.id===id?updated:p)};
+  try {if(storageBlocked)throw new Error('Недоступно');localStorage.setItem(STORAGE_KEY,JSON.stringify(next));}
+  catch{$('change-error').textContent='Изменение не сохранено. Браузер не разрешил запись или закончилось место. Прежние данные сохранены.';$('change-error').hidden=false;return;}
+  data=next;$('change-dialog').close();changeRequest=null;
+  if(field==='date' && value){selectedDay=value;calendarMonth=new Date(value+'T12:00:00');calendarMonth.setDate(1);}
+  renderPosts();message('Изменение сохранено в этом браузере.');
+  if($('viewer').open)viewPost(id);
 }
 function viewPost(id) {
   const post = data.posts.find(p => p.id === id); if (!post) return;
@@ -167,18 +285,30 @@ function viewPost(id) {
     const text = document.createElement('p'); text.textContent = value; $('view-content').append(heading,text);
   });
   post.links.forEach(link => { const a = document.createElement('a'); a.textContent = link.label || link.url; a.href = link.url; a.target = '_blank'; a.rel = 'noopener noreferrer'; $('view-content').append(a); });
-  $('viewer').showModal();
+  if(!$('viewer').open)$('viewer').showModal();
 }
 const sections = {plan:'Мой план',calendar:'Календарь',ideas:'Идеи',statuses:'Статусы',more:'Ещё',archive:'Архив',help:'Справка',data:'Данные и резервная копия'};
 function navigate(section) {
+  currentSection = section;
   $('page-title').textContent = sections[section];
   document.querySelectorAll('[data-section]').forEach(b => { b.removeAttribute('aria-current'); if (b.dataset.section === section) b.setAttribute('aria-current','page'); });
-  $('posts-section').hidden = section !== 'plan'; $('more-menu').hidden = section !== 'more'; $('placeholder').hidden = ['plan','more'].includes(section);
-  $('page-subtitle').textContent = section === 'plan' ? 'От первой идеи до готовой публикации.' : 'Сейчас доступна работа с карточками публикаций в разделе «План».';
+  $('posts-section').hidden = !['plan','ideas'].includes(section); $('more-menu').hidden = section !== 'more'; $('placeholder').hidden = ['plan','ideas','calendar','statuses','more'].includes(section);
+  $('calendar-section').hidden=section!=='calendar';$('board-section').hidden=section!=='statuses';
+  $('page-subtitle').textContent = {plan:'Публикации по датам. Идеи без даты — в отдельном разделе.',ideas:'Сначала мысль, потом дата. Здесь все записи без дня публикации.',calendar:'Ваш контент в ритме месяца.',statuses:'От первой идеи до опубликованного поста.'}[section] || 'Дополнительные разделы планировщика.';
   $('placeholder-title').textContent = sections[section];
   $('placeholder-text').textContent = 'Этот раздел появится на следующих шагах разработки. Публикации уже можно создавать, просматривать и редактировать в разделе «План».';
+  renderPosts();
 }
 fillSelect('status', CONFIG.statuses, false); fillSelect('category', CONFIG.categories, true); fillSelect('format', CONFIG.formats, true);
+fillSelect('new-status',CONFIG.statuses,false);
+$('change-date').addEventListener('click',()=>openChange(viewedId,'date'));
+$('change-status').addEventListener('click',()=>openChange(viewedId,'status'));
+$('cancel-change').addEventListener('click',()=>{$('change-dialog').close();changeRequest=null;});
+$('change-form').addEventListener('submit',e=>{e.preventDefault();applyChange();});
+function shiftMonth(amount) {calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+amount,1);selectedDay=localDate(calendarMonth);renderPosts();}
+$('prev-month').addEventListener('click',()=>shiftMonth(-1));$('next-month').addEventListener('click',()=>shiftMonth(1));
+$('calendar-today').addEventListener('click',()=>{const now=new Date();calendarMonth=new Date(now.getFullYear(),now.getMonth(),1);selectedDay=localDate(now);renderPosts();});
+$('day-create').addEventListener('click',()=>createForDate(selectedDay));
 document.querySelectorAll('[data-section]').forEach(b => b.addEventListener('click', () => navigate(b.dataset.section)));
 document.querySelector('.brand').addEventListener('click', () => navigate('plan'));
 $('new-post').addEventListener('click', () => openEditor()); $('empty-create').addEventListener('click', () => openEditor());
