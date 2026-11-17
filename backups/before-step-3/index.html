@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Планировщик контента</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#plan"><span class="brand-icon" aria-hidden="true">П</span><span>Планировщик<small>Контент для Telegram</small></span></a>
+    <p class="nav-caption">МОЁ РАБОЧЕЕ ПРОСТРАНСТВО</p>
+    <nav aria-label="Основная навигация" id="navigation">
+      <button data-section="plan" aria-current="page">План</button>
+      <button data-section="calendar">Календарь</button>
+      <button data-section="ideas">Идеи</button>
+      <button data-section="statuses">Статусы</button>
+      <button data-section="more" class="mobile-more">Ещё</button>
+      <div class="desktop-extra">
+        <button data-section="archive">Архив</button>
+        <button data-section="help">Справка</button>
+        <button data-section="data">Данные и резервная копия</button>
+      </div>
+    </nav>
+    <p class="local-note">Ваши записи остаются<br>в этом браузере.</p>
+  </aside>
+  <main>
+    <header class="page-header"><div><p class="eyebrow">ЛИЧНЫЙ КОНТЕНТ-ПЛАН</p><h1 id="page-title">Мой план</h1><p id="page-subtitle">От первой идеи до готовой публикации.</p></div><button class="primary" id="new-post">+ Новая публикация</button></header>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section id="recovery" class="recovery" aria-label="Восстановление черновика" hidden>
+      <div><strong>Осталась незавершённая форма</strong><p>Можно восстановить введённый текст и продолжить работу.</p></div>
+      <div class="actions"><button id="recover" class="primary">Восстановить черновик</button><button id="discard-draft">Удалить черновик</button></div>
+    </section>
+    <section id="posts-section" aria-label="Публикации"><div class="section-heading"><h2 id="list-title">Публикации по датам</h2><span id="post-count" class="badge">0</span></div><div id="ideas-shortcut"></div><div id="posts"></div><div id="empty" class="empty"><span aria-hidden="true" class="empty-symbol">✎</span><h2 id="empty-title">План пока свободен</h2><p id="empty-text">Создайте публикацию с датой или сохраните идею на потом.</p><button id="empty-create" class="primary">Новая публикация</button></div></section>
+    <section id="calendar-section" hidden aria-label="Календарь публикаций">
+      <div class="calendar-toolbar"><h2 id="month-title" aria-live="polite"></h2><div class="actions"><button id="prev-month" aria-label="Предыдущий месяц">←</button><button id="calendar-today">Сегодня</button><button id="next-month" aria-label="Следующий месяц">→</button></div></div>
+      <p class="hint">Выберите день, чтобы увидеть публикации. На компьютере карточку можно перенести мышью.</p>
+      <div class="weekdays" aria-hidden="true"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div><div id="calendar-grid" class="calendar-grid"></div>
+      <section class="day-agenda" aria-labelledby="day-title"><div class="section-heading"><h2 id="day-title"></h2><button id="day-create">+ Публикация</button></div><div id="day-posts" class="cards"></div></section>
+    </section>
+    <section id="board-section" hidden aria-label="Публикации по статусам"><div id="board-tabs" class="board-tabs" aria-label="Выбор статуса"></div><div id="board" class="board"></div></section>
+    <section id="placeholder" class="empty" hidden><h2 id="placeholder-title"></h2><p id="placeholder-text"></p></section>
+    <section id="more-menu" class="menu-panel" hidden aria-label="Дополнительные разделы"><button data-section="archive">Архив</button><button data-section="help">Справка</button><button data-section="data">Данные и резервная копия</button></section>
+    <footer>Личный планировщик · Telegram <span>Сохранение в этом браузере</span></footer>
+  </main>
+
+  <dialog id="editor" aria-labelledby="editor-title">
+    <div class="dialog-header"><div><p class="eyebrow">ПУБЛИКАЦИЯ</p><h2 id="editor-title">Новая публикация</h2></div><button type="button" id="close-editor" aria-label="Закрыть форму">✕</button></div>
+    <form id="post-form" novalidate>
+      <div id="form-error" class="error" role="alert" hidden></div>
+      <label>Тема <span class="required">*</span><input name="title" id="title" required placeholder="О чём хотите рассказать?" aria-describedby="title-error"><span class="field-error" id="title-error"></span></label>
+      <div class="form-grid"><label>Плановая дата<input name="date" id="date" type="date"><small>Можно назначить позже</small></label><label>Время публикации<input name="time" id="time" type="time" disabled><small>Местное время устройства</small></label></div>
+      <label>Статус<select name="status" id="status"></select></label>
+      <div class="form-grid"><label>Рубрика<select name="category" id="category"></select></label><label>Формат<select name="format" id="format"></select></label></div>
+      <label>Заметки<textarea name="notes" id="notes" rows="3" placeholder="Мысли, идеи, что важно упомянуть…"></textarea></label>
+      <label>Черновик публикации<textarea name="body" id="body" rows="7" placeholder="Здесь можно написать текст поста…"></textarea></label>
+      <fieldset><legend>Ссылки и материалы</legend><p class="hint">Изображения и документы хранятся у вас. Добавьте ссылки на них.</p><div id="links"></div><button type="button" id="add-link" class="text-button">+ Добавить ссылку</button></fieldset>
+      <p id="draft-state" class="hint" role="status">Изменения применятся после сохранения.</p>
+      <div class="form-footer"><button type="button" id="cancel-editor">Отмена</button><button type="submit" class="primary">Сохранить</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="viewer" aria-labelledby="viewer-title"><div class="dialog-header"><h2 id="viewer-title"></h2><button id="close-viewer" aria-label="Закрыть публикацию">✕</button></div><div id="view-content"></div><div class="form-footer viewer-actions"><button id="change-date">Изменить дату</button><button id="change-status">Изменить статус</button><button id="edit-post" class="primary">Редактировать</button></div></dialog>
+  <dialog id="change-dialog" aria-labelledby="change-title"><h2 id="change-title"></h2><p id="change-summary"></p><div id="change-error" class="error" role="alert" hidden></div><form id="change-form" novalidate><label id="change-date-label">Новая дата<input id="new-date" type="date"><small>Если убрать дату, запись вернётся в идеи без даты, а время очистится.</small></label><label id="change-status-label">Новый статус<select id="new-status"></select></label><div class="form-footer"><button type="button" id="cancel-change">Отмена</button><button type="submit" id="confirm-change" class="primary">Сохранить</button></div></form></dialog>
+  <dialog id="unsaved" aria-labelledby="unsaved-title"><h2 id="unsaved-title">Сохранить изменения?</h2><p>В форме есть несохранённый текст.</p><div class="choice-actions"><button id="keep-editing">Продолжить редактирование</button><button id="discard-edit">Закрыть без сохранения</button><button id="save-edit" class="primary">Сохранить</button></div></dialog>
+</body>
+</html>

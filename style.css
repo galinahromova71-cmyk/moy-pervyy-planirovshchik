@@ -4,6 +4,27 @@
 @media(max-width:370px){.form-grid{grid-template-columns:1fr;gap:0}.sidebar nav button{font-size:11px}main{padding-left:12px;padding-right:12px}}
 
 /* План, календарь и доска статусов. */
+.summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:20px 0}
+.summary div{background:#edf1e7;border-radius:12px;padding:16px;font-size:13px;color:var(--muted)}
+.summary strong{display:block;margin-top:8px;font-size:26px;color:var(--green)}
+.filter-panel{background:white;border:1px solid var(--border);border-radius:14px;padding:18px;margin:24px 0}
+.filter-panel label,#archive-search-panel label{display:block;font-size:14px;font-weight:600;min-width:0}
+.filter-panel label input,.filter-panel label select,#archive-search-panel input{margin-top:8px}
+.search-row,.filter-footer{display:flex;align-items:end;gap:12px;justify-content:space-between}
+.search-row label{flex:1}.search-row button{flex-shrink:0}
+.filter-panel details{margin-top:18px}.filter-panel summary{cursor:pointer;padding:10px 0;min-height:44px}
+.filter-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:14px 0}
+.filter-footer{margin-top:18px;align-items:center}.filter-footer .hint{margin:0}
+.filter-panel .form-grid label{margin-bottom:12px}
+.load-more{margin:4px 0 18px}.due-label{font-size:12px;padding:4px 7px;border-radius:6px;align-self:flex-start}
+.due-label.overdue{color:#8a3a21;background:#fff0e8}.due-label.upcoming{color:#31593a;background:#e9f0dc}
+.compact-card .due-label{font-size:10px;padding:2px 4px}
+.calendar-day{position:relative}.day-overdue{display:inline-grid;place-items:center;border-radius:50%;background:#984222;color:white;font-size:11px;width:16px;height:16px;position:absolute;top:3px;right:3px;pointer-events:none}
+.danger{color:#943c26;border-color:#d8b5a7}.danger:hover{background:#fff0e8}
+#archive-search-panel{display:flex;align-items:end;gap:12px;background:white;padding:18px;border-radius:14px;border:1px solid var(--border)}
+#archive-search-panel label{flex:1}
+@media(max-width:760px){.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.summary{gap:6px}.summary div{padding:12px 8px;font-size:11px}.summary strong{font-size:23px}.search-row{flex-wrap:wrap}.search-row label{flex-basis:100%}.filter-footer{align-items:start;flex-direction:column}.filter-panel{padding:14px}#archive-search-panel{flex-wrap:wrap}#archive-search-panel label{flex-basis:100%}}
+@media(max-width:370px){.filter-grid{grid-template-columns:1fr}}
 .date-heading{font-size:15px;color:var(--muted);margin:26px 0 12px}
 .ideas-link{margin-bottom:8px;background:#eaf0e2;color:var(--green)}
 .calendar-toolbar{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:18px}

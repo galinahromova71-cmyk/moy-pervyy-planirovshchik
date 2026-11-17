@@ -24,6 +24,58 @@ let calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
 let selectedDay = localDate(new Date());
 let boardStatus = 'Идея';
 let changeRequest = null;
+const PAGE_SIZE = 50;
+let listLimit = PAGE_SIZE;
+let dayLimit = PAGE_SIZE;
+let boardLimits = Object.fromEntries(CONFIG.statuses.map(s => [s, PAGE_SIZE]));
+let archiveUndoId = null;
+let deleteId = null;
+let renderedToday = localDate(new Date());
+
+function resetLimits() {
+  listLimit = PAGE_SIZE; dayLimit = PAGE_SIZE;
+  boardLimits = Object.fromEntries(CONFIG.statuses.map(s => [s, PAGE_SIZE]));
+}
+function dueState(post, today = localDate(new Date())) {
+  if (post.archivedAt || !post.date || post.status === 'Опубликовано') return '';
+  if (post.date < today) return 'overdue';
+  const end = new Date(today + 'T12:00:00'); end.setDate(end.getDate() + 7);
+  return post.date <= localDate(end) ? 'upcoming' : '';
+}
+function searchMatch(post, query) {
+  const text = [post.title,post.notes,post.body,post.category,post.format,...post.links.flatMap(l => [l.label,l.url])].join('\n').toLocaleLowerCase('ru-RU');
+  return text.includes(query.trim().toLocaleLowerCase('ru-RU'));
+}
+function filterValues() {
+  return {query:$('search').value.trim(), status:$('filter-status').value, category:$('filter-category').value, format:$('filter-format').value, period:$('filter-period').value, presence:$('filter-presence').value, from:$('filter-from').value, to:$('filter-to').value};
+}
+function hasFilters(f) { return Boolean(f.query || f.status || f.category || f.format || f.period !== 'all' || f.presence !== 'all'); }
+function filteredActive(active) {
+  const f = filterValues();
+  let from = '', to = '', error = '';
+  if (f.period === 'custom') {
+    from = f.from; to = f.to;
+    if (!from || !to || !validDate(from) || !validDate(to)) error = 'Укажите начало и конец периода.';
+    else if (from > to) error = 'Начало периода не может быть позже его окончания.';
+  } else if (['current','next'].includes(f.period)) {
+    const today = new Date(); const offset = f.period === 'next' ? 1 : 0;
+    from = localDate(new Date(today.getFullYear(),today.getMonth()+offset,1));
+    to = localDate(new Date(today.getFullYear(),today.getMonth()+offset+1,0));
+  }
+  $('custom-range').hidden = f.period !== 'custom';
+  $('filter-error').textContent = error; $('filter-error').hidden = !error;
+  $('filter-count').textContent = hasFilters(f) ? '· применены' : '';
+  $('filter-hint').textContent = hasFilters(f) ? 'Фильтры применяются вместе. Поиск охватывает все активные записи.' : 'Поиск учитывает все записи, включая ещё не показанные.';
+  if (error) return [];
+  return active.filter(p => searchMatch(p,f.query) && (!f.status || p.status===f.status) && (!f.category || p.category===f.category) && (!f.format || p.format===f.format) &&
+    (f.presence!=='with' || p.date) && (f.presence!=='without' || !p.date) && (!from || (p.date && p.date>=from && p.date<=to)));
+}
+function addMore(container, shown, total, onMore) {
+  if (shown >= total) return;
+  const button = document.createElement('button'); button.className='load-more'; button.textContent='Показать ещё 50';
+  const info=document.createElement('p'); info.className='hint'; info.textContent='Показано '+shown+' из '+total;
+  button.addEventListener('click',onMore); container.append(info,button);
+}
 
 function localDate(d) { return [String(d.getFullYear()).padStart(4,'0'), String(d.getMonth()+1).padStart(2,'0'), String(d.getDate()).padStart(2,'0')].join('-'); }
 function displayDate(value) { return value ? value.split('-').reverse().join('.') : 'Без даты'; }
@@ -164,7 +216,9 @@ function postCard(post, compact = false) {
     const title = document.createElement('strong'); title.textContent = post.title;
     const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = [displayDate(post.date), post.time, post.category].filter(Boolean).join(' · ');
     button.append(status,title,meta); button.addEventListener('click', () => viewPost(post.id));
-    button.draggable = true;
+    const due = dueState(post);
+    if(due){const label=document.createElement('span');label.className='due-label '+due;label.textContent=due==='overdue'?'Просрочено':'Ближайшая';button.append(label);}
+    button.draggable = !post.archivedAt;
     button.addEventListener('dragstart', e => { e.dataTransfer.setData('application/x-planner-post', post.id); e.dataTransfer.effectAllowed = 'move'; });
     return button;
 }
@@ -182,29 +236,42 @@ function dropTarget(element, field, value) {
 }
 function renderPosts() {
   const active = sortedPosts(data.posts.filter(p => !p.archivedAt));
-  const posts = active.filter(p => currentSection === 'ideas' ? !p.date : p.date);
-  $('posts').replaceChildren(); $('ideas-shortcut').replaceChildren();
-  $('list-title').textContent = currentSection === 'ideas' ? 'Идеи без даты' : 'Публикации по датам';
+  renderedToday = localDate(new Date());
+  $('count-ideas').textContent=active.filter(p=>!p.date).length;
+  $('count-upcoming').textContent=active.filter(p=>dueState(p)==='upcoming').length;
+  $('count-overdue').textContent=active.filter(p=>dueState(p)==='overdue').length;
+  const filtered = filteredActive(active);
+  const archive = currentSection === 'archive';
+  const f = filterValues();
+  const posts = archive ? data.posts.filter(p=>p.archivedAt && searchMatch(p,$('archive-search').value)).sort((a,b)=>b.archivedAt.localeCompare(a.archivedAt)||a.id.localeCompare(b.id)) :
+    filtered.filter(p => currentSection === 'ideas' ? !p.date : (hasFilters(f) || p.date));
+  $('posts').replaceChildren(); $('ideas-shortcut').replaceChildren();$('list-more').replaceChildren();
+  $('calendar-grid').replaceChildren();$('day-posts').replaceChildren();$('board').replaceChildren();$('board-tabs').replaceChildren();
+  $('list-title').textContent = archive ? 'Архивные публикации' : currentSection === 'ideas' ? 'Идеи без даты' : hasFilters(f) ? 'Результаты поиска и фильтров' : 'Публикации по датам';
   $('post-count').textContent = posts.length; $('empty').hidden = posts.length > 0;
-  $('empty-title').textContent = currentSection === 'ideas' ? 'Место для новых идей' : 'План пока свободен';
-  $('empty-text').textContent = currentSection === 'ideas' ? 'Сохраните тему сейчас, а день публикации выберите позже.' : 'Добавьте публикацию с датой или назначьте дату сохранённой идее.';
-  if (currentSection !== 'ideas') {
+  const searching=archive ? Boolean($('archive-search').value.trim()) : hasFilters(f);
+  $('empty-title').textContent = searching ? 'Ничего не найдено' : archive ? 'В архиве пока пусто' : currentSection === 'ideas' ? 'Место для новых идей' : 'План пока свободен';
+  $('empty-text').textContent = searching ? 'Измените запрос или сбросьте фильтры.' : archive ? 'Здесь будут записи, которые вы уберёте из активного плана. Их можно восстановить.' : currentSection === 'ideas' ? 'Сохраните тему сейчас, а день публикации выберите позже.' : 'Добавьте публикацию с датой или назначьте дату сохранённой идее.';
+  $('empty-create').hidden=archive || searching;$('archive-help').hidden=!archive || searching;
+  if (currentSection === 'plan') {
     const shortcut = document.createElement('button'); shortcut.className = 'ideas-link';
     shortcut.textContent = 'Идеи без даты: ' + active.filter(p=>!p.date).length;
     shortcut.addEventListener('click',()=>navigate('ideas')); $('ideas-shortcut').append(shortcut);
   }
   let group;
   let lastDate = null;
-  posts.forEach(post => {
-    if (lastDate !== post.date || !group) {
+  if(['plan','ideas','archive'].includes(currentSection)) posts.slice(0,listLimit).forEach(post => {
+    if ((!archive && lastDate !== post.date) || !group) {
       const heading = document.createElement('h3'); heading.className = 'date-heading'; heading.textContent = displayDate(post.date);
       group = document.createElement('div'); group.className = 'cards';
-      if (post.date) $('posts').append(heading);
+      if (!archive && (post.date || hasFilters(f))) $('posts').append(heading);
       $('posts').append(group); lastDate = post.date;
     }
     group.append(postCard(post));
   });
-  renderCalendar(active); renderBoard(active);
+  if(['plan','ideas','archive'].includes(currentSection)) addMore($('list-more'),Math.min(listLimit,posts.length),posts.length,()=>{listLimit+=PAGE_SIZE;renderPosts();});
+  if(currentSection==='calendar')renderCalendar(filtered);
+  if(currentSection==='statuses')renderBoard(filtered);
 }
 function createForDate(date) { openEditor({date}); }
 function renderCalendar(posts) {
@@ -223,18 +290,21 @@ function renderCalendar(posts) {
     const choose = document.createElement('button'); choose.className='day-number'; choose.textContent=day;
     choose.setAttribute('aria-label',displayDate(date) + ', публикаций: ' + dayPosts.length);
     choose.setAttribute('aria-pressed',String(date===selectedDay));
-    choose.addEventListener('click',()=>{selectedDay=date;renderCalendar(posts);if(!dayPosts.length)createForDate(date);});
+    // При действующих фильтрах пустой результат дня не означает отсутствие записей.
+    choose.addEventListener('click',()=>{selectedDay=date;dayLimit=PAGE_SIZE;renderCalendar(posts);if(!data.posts.some(p=>!p.archivedAt && p.date===date))createForDate(date);});
     cell.append(choose);
     const count = document.createElement('span'); count.className='day-count';count.textContent=dayPosts.length ? dayPosts.length : ''; cell.append(count);
     const dayCards = document.createElement('div');dayCards.className='calendar-cards';
     dayPosts.slice(0,3).forEach(p=>dayCards.append(postCard(p,true)));
-    if(dayPosts.length>3){const more=document.createElement('button');more.className='more-day';more.textContent='Ещё '+(dayPosts.length-3);more.addEventListener('click',()=>{selectedDay=date;renderCalendar(posts);$('day-title').scrollIntoView({block:'nearest'});});dayCards.append(more);}
+    if(dayPosts.length>3){const more=document.createElement('button');more.className='more-day';more.textContent='Ещё '+(dayPosts.length-3);more.addEventListener('click',()=>{selectedDay=date;dayLimit=PAGE_SIZE;renderCalendar(posts);$('day-title').scrollIntoView({block:'nearest'});});dayCards.append(more);}
+    if(dayPosts.some(p=>dueState(p)==='overdue')){const flag=document.createElement('span');flag.className='day-overdue';flag.textContent='!';flag.setAttribute('aria-label','Есть просроченные публикации');cell.append(flag);}
     cell.append(dayCards);dropTarget(cell,'date',date);$('calendar-grid').append(cell);
   }
   $('day-title').textContent='Публикации на '+displayDate(selectedDay);
   $('day-posts').replaceChildren();
   const selectedPosts=posts.filter(p=>p.date===selectedDay);
-  selectedPosts.forEach(p=>$('day-posts').append(postCard(p)));
+  selectedPosts.slice(0,dayLimit).forEach(p=>$('day-posts').append(postCard(p)));
+  addMore($('day-posts'),Math.min(dayLimit,selectedPosts.length),selectedPosts.length,()=>{dayLimit+=PAGE_SIZE;renderCalendar(posts);});
   if(!selectedPosts.length){const hint=document.createElement('p');hint.className='hint';hint.textContent='На этот день публикаций пока нет.';$('day-posts').append(hint);}
 }
 function renderBoard(posts) {
@@ -245,7 +315,8 @@ function renderBoard(posts) {
     tab.addEventListener('click',()=>{boardStatus=status;renderBoard(posts);});$('board-tabs').append(tab);
     const column=document.createElement('section');column.className='board-column';column.dataset.status=status;column.classList.toggle('active-column',status===boardStatus);
     const heading=document.createElement('h2');heading.textContent=status+' · '+items.length;column.append(heading);
-    items.forEach(p=>column.append(postCard(p)));
+    items.slice(0,boardLimits[status]).forEach(p=>column.append(postCard(p)));
+    addMore(column,Math.min(boardLimits[status],items.length),items.length,()=>{boardLimits[status]+=PAGE_SIZE;renderBoard(posts);});
     if(!items.length){const empty=document.createElement('p');empty.className='hint';empty.textContent='Публикаций пока нет.';column.append(empty);}
     dropTarget(column,'status',status);$('board').append(column);
   });
@@ -278,6 +349,9 @@ function applyChange() {
 }
 function viewPost(id) {
   const post = data.posts.find(p => p.id === id); if (!post) return;
+  $('view-error').hidden=true;
+  ['edit-post','change-date','change-status','archive-post'].forEach(key=>$(key).hidden=Boolean(post.archivedAt));
+  ['restore-post','delete-post'].forEach(key=>$(key).hidden=!post.archivedAt);
   viewedId = id; $('viewer-title').textContent = post.title; $('view-content').replaceChildren();
   [['Статус',post.status],['Плановая дата',post.date ? post.date.split('-').reverse().join('.') : 'Не назначена'],['Время',post.time],['Рубрика',post.category],['Формат',post.format],['Заметки',post.notes],['Черновик',post.body]].forEach(([name,value]) => {
     if (!value) return;
@@ -287,27 +361,75 @@ function viewPost(id) {
   post.links.forEach(link => { const a = document.createElement('a'); a.textContent = link.label || link.url; a.href = link.url; a.target = '_blank'; a.rel = 'noopener noreferrer'; $('view-content').append(a); });
   if(!$('viewer').open)$('viewer').showModal();
 }
+// Сначала записываем целиком новое состояние. При отказе хранилища состояние в памяти не меняется.
+function saveArchiveAction(next, errorElement) {
+  try { if(storageBlocked)throw new Error('Недоступно'); localStorage.setItem(STORAGE_KEY,JSON.stringify(next)); }
+  catch {
+    const text='Изменение не сохранено: браузер не разрешил запись или закончилось место. Прежние данные сохранены.';
+    if(errorElement){errorElement.textContent=text;errorElement.hidden=false;}else message(text,true);
+    return false;
+  }
+  data=next;return true;
+}
+function archivePost() {
+  const post=data.posts.find(p=>p.id===viewedId && !p.archivedAt);if(!post)return;
+  const now=new Date().toISOString();
+  const next={...data,posts:data.posts.map(p=>p.id===post.id?{...p,archivedAt:now,updatedAt:now}:p)};
+  if(!saveArchiveAction(next,$('view-error')))return;
+  archiveUndoId=post.id;$('archive-undo').hidden=false;$('viewer').close();renderPosts();message('Публикация перемещена в архив. Её можно восстановить.');
+}
+function restorePost(id, undo=false) {
+  const post=data.posts.find(p=>p.id===id && p.archivedAt);if(!post)return;
+  const next={...data,posts:data.posts.map(p=>p.id===id?{...p,archivedAt:null,updatedAt:new Date().toISOString()}:p)};
+  if(!saveArchiveAction(next,undo?null:$('view-error')))return;
+  if(archiveUndoId===id){archiveUndoId=null;$('archive-undo').hidden=true;}
+  if($('viewer').open)$('viewer').close();renderPosts();message('Публикация восстановлена с прежними полями и статусом.');
+}
+function requestDelete() {
+  const post=data.posts.find(p=>p.id===viewedId && p.archivedAt);if(!post)return;
+  deleteId=post.id;$('delete-summary').textContent=post.title;$('delete-error').hidden=true;$('delete-dialog').showModal();
+}
+function confirmDelete() {
+  const post=data.posts.find(p=>p.id===deleteId && p.archivedAt);if(!post)return;
+  if(!saveArchiveAction({...data,posts:data.posts.filter(p=>p.id!==deleteId)},$('delete-error')))return;
+  if(archiveUndoId===deleteId){archiveUndoId=null;$('archive-undo').hidden=true;}
+  deleteId=null;$('delete-dialog').close();$('viewer').close();renderPosts();message('Архивная запись удалена навсегда.');
+}
 const sections = {plan:'Мой план',calendar:'Календарь',ideas:'Идеи',statuses:'Статусы',more:'Ещё',archive:'Архив',help:'Справка',data:'Данные и резервная копия'};
 function navigate(section) {
-  currentSection = section;
+  currentSection = section;resetLimits();
   $('page-title').textContent = sections[section];
   document.querySelectorAll('[data-section]').forEach(b => { b.removeAttribute('aria-current'); if (b.dataset.section === section) b.setAttribute('aria-current','page'); });
-  $('posts-section').hidden = !['plan','ideas'].includes(section); $('more-menu').hidden = section !== 'more'; $('placeholder').hidden = ['plan','ideas','calendar','statuses','more'].includes(section);
+  $('posts-section').hidden = !['plan','ideas','archive'].includes(section); $('more-menu').hidden = section !== 'more'; $('placeholder').hidden = ['plan','ideas','archive','calendar','statuses','more'].includes(section);
   $('calendar-section').hidden=section!=='calendar';$('board-section').hidden=section!=='statuses';
-  $('page-subtitle').textContent = {plan:'Публикации по датам. Идеи без даты — в отдельном разделе.',ideas:'Сначала мысль, потом дата. Здесь все записи без дня публикации.',calendar:'Ваш контент в ритме месяца.',statuses:'От первой идеи до опубликованного поста.'}[section] || 'Дополнительные разделы планировщика.';
+  $('filter-panel').hidden=!['plan','ideas','calendar','statuses'].includes(section);$('summary').hidden=section!=='plan';$('archive-search-panel').hidden=section!=='archive';
+  $('page-subtitle').textContent = {plan:'Публикации по датам. Поиск и фильтры охватывают также идеи без даты.',ideas:'Сначала мысль, потом дата. Здесь все записи без дня публикации.',calendar:'Ваш контент в ритме месяца.',statuses:'От первой идеи до опубликованного поста.',archive:'Записи вне активного плана. Их можно восстановить.'}[section] || 'Дополнительные разделы планировщика.';
   $('placeholder-title').textContent = sections[section];
   $('placeholder-text').textContent = 'Этот раздел появится на следующих шагах разработки. Публикации уже можно создавать, просматривать и редактировать в разделе «План».';
   renderPosts();
 }
 fillSelect('status', CONFIG.statuses, false); fillSelect('category', CONFIG.categories, true); fillSelect('format', CONFIG.formats, true);
 fillSelect('new-status',CONFIG.statuses,false);
+fillSelect('filter-status',CONFIG.statuses,true);fillSelect('filter-category',CONFIG.categories,true);fillSelect('filter-format',CONFIG.formats,true);
+['filter-status','filter-category','filter-format'].forEach(id=>$(id).options[0].textContent='Все');
+['search','filter-from','filter-to'].forEach(id=>$(id).addEventListener('input',()=>{resetLimits();renderPosts();}));
+['filter-status','filter-category','filter-format','filter-period','filter-presence'].forEach(id=>$(id).addEventListener('change',()=>{resetLimits();renderPosts();}));
+$('clear-search').addEventListener('click',()=>{$('search').value='';resetLimits();renderPosts();$('search').focus();});
+$('reset-filters').addEventListener('click',()=>{['search','filter-status','filter-category','filter-format','filter-from','filter-to'].forEach(id=>$(id).value='');$('filter-period').value='all';$('filter-presence').value='all';resetLimits();renderPosts();});
+$('archive-search').addEventListener('input',()=>{listLimit=PAGE_SIZE;renderPosts();});
+$('clear-archive-search').addEventListener('click',()=>{$('archive-search').value='';listLimit=PAGE_SIZE;renderPosts();});
+$('archive-help').addEventListener('click',()=>navigate('help'));
+$('archive-post').addEventListener('click',archivePost);$('restore-post').addEventListener('click',()=>restorePost(viewedId));
+$('undo-archive').addEventListener('click',()=>restorePost(archiveUndoId,true));
+$('delete-post').addEventListener('click',requestDelete);$('confirm-delete').addEventListener('click',confirmDelete);
+$('cancel-delete').addEventListener('click',()=>{$('delete-dialog').close();deleteId=null;});
 $('change-date').addEventListener('click',()=>openChange(viewedId,'date'));
 $('change-status').addEventListener('click',()=>openChange(viewedId,'status'));
 $('cancel-change').addEventListener('click',()=>{$('change-dialog').close();changeRequest=null;});
 $('change-form').addEventListener('submit',e=>{e.preventDefault();applyChange();});
-function shiftMonth(amount) {calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+amount,1);selectedDay=localDate(calendarMonth);renderPosts();}
+function shiftMonth(amount) {calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+amount,1);selectedDay=localDate(calendarMonth);dayLimit=PAGE_SIZE;renderPosts();}
 $('prev-month').addEventListener('click',()=>shiftMonth(-1));$('next-month').addEventListener('click',()=>shiftMonth(1));
-$('calendar-today').addEventListener('click',()=>{const now=new Date();calendarMonth=new Date(now.getFullYear(),now.getMonth(),1);selectedDay=localDate(now);renderPosts();});
+$('calendar-today').addEventListener('click',()=>{const now=new Date();calendarMonth=new Date(now.getFullYear(),now.getMonth(),1);selectedDay=localDate(now);dayLimit=PAGE_SIZE;renderPosts();});
 $('day-create').addEventListener('click',()=>createForDate(selectedDay));
 document.querySelectorAll('[data-section]').forEach(b => b.addEventListener('click', () => navigate(b.dataset.section)));
 document.querySelector('.brand').addEventListener('click', () => navigate('plan'));
@@ -332,4 +454,7 @@ $('recover').addEventListener('click', () => {
 $('discard-draft').addEventListener('click', clearDraft);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraft(); });
 window.addEventListener('pagehide', saveDraft);
+function refreshDay() {if(localDate(new Date())!==renderedToday)renderPosts();}
+setInterval(refreshDay,60000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refreshDay();});
 loadData(); renderPosts();
