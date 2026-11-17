@@ -165,7 +165,7 @@ function openDemo() {
   $('demo-dialog').showModal();
 }
 function addDemo() {
-  const now=new Date().toISOString();const post={...DEMO,links:[],id:crypto.randomUUID(),createdAt:now,updatedAt:now,archivedAt:null};
+  const now=new Date().toISOString();const post={...DEMO,links:[],id:newPostId(),createdAt:now,updatedAt:now,archivedAt:null};
   if(!saveArchiveAction({...data,posts:[...data.posts,post]},$('demo-error')))return;
   $('demo-dialog').close();$('reset-filters').click();navigate('ideas');message('Пример добавлен в ваши идеи. Его можно редактировать или отправить в архив.');
 }
@@ -219,6 +219,14 @@ function addMore(container, shown, total, onMore) {
 }
 
 function localDate(d) { return [String(d.getFullYear()).padStart(4,'0'), String(d.getMonth()+1).padStart(2,'0'), String(d.getDate()).padStart(2,'0')].join('-'); }
+function newPostId() {
+  // randomUUID недоступен при открытии с телефона по обычному HTTP в локальной сети.
+  if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
+  const bytes=crypto.getRandomValues(new Uint8Array(16));
+  bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+  const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+  return [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-');
+}
 function displayDate(value) { return value ? value.split('-').reverse().join('.') : 'Без даты'; }
 function sortedPosts(posts) {
   return [...posts].sort((a,b) => (a.date || '9999-99-99').localeCompare(b.date || '9999-99-99') || (a.time || '99:99').localeCompare(b.time || '99:99') || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
@@ -336,7 +344,7 @@ function savePost() {
   if (storageBlocked) { formError('Сохранение недоступно: прежние данные не удалось прочитать. Они не будут перезаписаны.'); saveDraft(); return false; }
   const previous = data.posts.find(p => p.id === editingId);
   const now = new Date().toISOString();
-  const post = {...values, id: previous?.id || crypto.randomUUID(), createdAt:previous?.createdAt || now, updatedAt:now, archivedAt:previous?.archivedAt || null};
+  const post = {...values, id: previous?.id || newPostId(), createdAt:previous?.createdAt || now, updatedAt:now, archivedAt:previous?.archivedAt || null};
   const next = {...data, posts: previous ? data.posts.map(p => p.id === post.id ? post : p) : [...data.posts, post]};
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
   catch {

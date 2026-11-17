@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Планировщик контента</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#plan"><span class="brand-icon" aria-hidden="true">П</span><span>Планировщик<small>Контент для Telegram</small></span></a>
+    <p class="nav-caption">МОЁ РАБОЧЕЕ ПРОСТРАНСТВО</p>
+    <nav aria-label="Основная навигация" id="navigation">
+      <button data-section="plan" aria-current="page">План</button>
+      <button data-section="calendar">Календарь</button>
+      <button data-section="ideas">Идеи</button>
+      <button data-section="statuses">Статусы</button>
+      <button data-section="more" class="mobile-more">Ещё</button>
+      <div class="desktop-extra">
+        <button data-section="archive">Архив</button>
+        <button data-section="help">Справка</button>
+        <button data-section="data">Данные и резервная копия</button>
+      </div>
+    </nav>
+    <p class="local-note">Ваши записи остаются<br>в этом браузере.</p>
+  </aside>
+  <main>
+    <header class="page-header"><div><p class="eyebrow">ЛИЧНЫЙ КОНТЕНТ-ПЛАН</p><h1 id="page-title">Мой план</h1><p id="page-subtitle">От первой идеи до готовой публикации.</p></div><button class="primary" id="new-post">+ Новая публикация</button></header>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div id="archive-undo" class="notice" role="status" hidden>Публикация перемещена в архив. <button id="undo-archive">Отменить</button></div>
+    <section id="welcome" class="info-panel" hidden aria-labelledby="welcome-title"><h2 id="welcome-title">Начните с одной идеи</h2><p>Нажмите «Новая публикация», запишите тему и сохраните. Дату можно выбрать позже. В календаре виден план по дням, а в разделе «Статусы» — этапы подготовки.</p><p>Данные остаются в этом браузере и не синхронизируются с телефоном или ноутбуком автоматически. Периодически скачивайте резервную копию.</p><div class="actions"><button id="welcome-example">Посмотреть пример</button><button id="welcome-help">Открыть справку</button><button id="dismiss-welcome">Понятно</button></div></section>
+    <section id="recovery" class="recovery" aria-label="Восстановление черновика" hidden>
+      <div><strong>Осталась незавершённая форма</strong><p>Можно восстановить введённый текст и продолжить работу.</p></div>
+      <div class="actions"><button id="recover" class="primary">Восстановить черновик</button><button id="discard-draft">Удалить черновик</button></div>
+    </section>
+    <section id="summary" class="summary" aria-label="Сводка плана"><div>Идеи без даты<strong id="count-ideas">0</strong></div><div>Ближайшие<strong id="count-upcoming">0</strong></div><div>Просрочено<strong id="count-overdue">0</strong></div></section>
+    <section id="filter-panel" class="filter-panel" aria-label="Поиск и фильтры">
+      <div class="search-row"><label for="search">Поиск по публикациям<input id="search" type="search" placeholder="Тема, заметки, текст или материал…"></label><button id="clear-search">Очистить поиск</button></div>
+      <details id="filter-details"><summary>Фильтры <span id="filter-count"></span></summary><div class="filter-grid">
+        <label>Статус<select id="filter-status"></select></label><label>Рубрика<select id="filter-category"></select></label><label>Формат<select id="filter-format"></select></label>
+        <label>Период<select id="filter-period"><option value="all">Все даты</option><option value="current">Этот месяц</option><option value="next">Следующий месяц</option><option value="custom">Произвольный диапазон</option></select></label>
+        <label>Плановая дата<select id="filter-presence"><option value="all">Любая</option><option value="with">С датой</option><option value="without">Без даты</option></select></label>
+      </div><div id="custom-range" class="form-grid" hidden><label>С даты<input id="filter-from" type="date"></label><label>По дату<input id="filter-to" type="date"></label></div><p id="filter-error" class="field-error" role="alert" hidden></p></details>
+      <div class="filter-footer"><span id="filter-hint" class="hint">Поиск учитывает все записи.</span><button id="reset-filters">Сбросить фильтры</button></div>
+    </section>
+    <section id="posts-section" aria-label="Публикации"><div id="archive-search-panel" hidden><label for="archive-search">Поиск в архиве<input id="archive-search" type="search" placeholder="Найти архивную запись…"></label><button id="clear-archive-search">Очистить поиск</button></div><div class="section-heading"><h2 id="list-title">Публикации по датам</h2><span id="post-count" class="badge">0</span></div><div id="ideas-shortcut"></div><div id="posts"></div><div id="list-more"></div><div id="empty" class="empty"><span aria-hidden="true" class="empty-symbol">✎</span><h2 id="empty-title">План пока свободен</h2><p id="empty-text">Создайте публикацию с датой или сохраните идею на потом.</p><button id="empty-create" class="primary">Новая публикация</button><button id="archive-help" hidden>Открыть справку</button></div></section>
+    <section id="calendar-section" hidden aria-label="Календарь публикаций">
+      <div class="calendar-toolbar"><h2 id="month-title" aria-live="polite"></h2><div class="actions"><button id="prev-month" aria-label="Предыдущий месяц">←</button><button id="calendar-today">Сегодня</button><button id="next-month" aria-label="Следующий месяц">→</button></div></div>
+      <p class="hint">Выберите день, чтобы увидеть публикации. На компьютере карточку можно перенести мышью.</p>
+      <div class="weekdays" aria-hidden="true"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div><div id="calendar-grid" class="calendar-grid"></div>
+      <section class="day-agenda" aria-labelledby="day-title"><div class="section-heading"><h2 id="day-title"></h2><button id="day-create">+ Публикация</button></div><div id="day-posts" class="cards"></div></section>
+    </section>
+    <section id="board-section" hidden aria-label="Публикации по статусам"><div id="board-tabs" class="board-tabs" aria-label="Выбор статуса"></div><div id="board" class="board"></div></section>
+    <section id="help-section" class="info-panel" hidden aria-label="Справка"><h2>Как пользоваться планировщиком</h2><ol><li><strong>Запишите идею.</strong> Нажмите «Новая публикация». Обязательна только тема; запись без даты появится в разделе «Идеи».</li><li><strong>Назначьте день.</strong> Откройте карточку и нажмите «Изменить дату» или выберите пустой день в календаре. Время можно указать в форме редактирования.</li><li><strong>Подготовьте текст.</strong> В карточке есть заметки, черновик и ссылки на материалы. Изменения записи применяются кнопкой «Сохранить»; временная копия формы сохраняется автоматически и предлагается к восстановлению.</li><li><strong>Меняйте статус.</strong> «Идея» → «В работе» → «Готово» → «Опубликовано». Можно возвращаться назад. Статус и дата не публикуют пост в Telegram автоматически.</li><li><strong>Найдите нужный материал.</strong> Поиск охватывает тему, заметки, черновик и материалы. Фильтры можно сочетать. В календаре видны только записи с датой, в идеях — без даты. Длинные списки раскрываются по 50 записей.</li><li><strong>Следите за сроками.</strong> «Ближайшая» — сегодня и следующие семь дней. «Просрочено» — дата прошла, а статус ещё не «Опубликовано». Это подсказки внутри страницы, а не уведомления при закрытом браузере.</li><li><strong>Уберите лишнее в архив.</strong> Запись можно восстановить. Удаление навсегда доступно только в архиве и требует подтверждения.</li><li><strong>Скачивайте резервную копию.</strong> В разделе «Данные и резервная копия» сохраняется JSON со всеми записями. Импорт заменяет текущий план целиком. Последний импорт можно отменить до следующего сохранённого изменения данных.</li></ol><p class="storage-hint">Важно: очистка данных браузера или действия операционной системы могут удалить локальные записи. Временный черновик и снимок отмены тоже хранятся в браузере. Храните скачанные копии отдельно и регулярно обновляйте их. Не меняйте адрес, с которого открываете планировщик: хранилище привязано к браузеру и адресу страницы.</p><button id="help-example" class="primary">Посмотреть пример</button></section>
+    <section id="data-section" class="info-panel" hidden aria-label="Данные и резервная копия"><h2>Ваш план — в ваших руках</h2><p>Скачайте JSON-копию, чтобы восстановить план или вручную перенести его в другой браузер. В копию входят активные записи, архив и настройки. Незавершённая форма и снимок отмены импорта в неё не входят.</p><p id="data-counts"></p><div id="data-error" class="error" role="alert" hidden></div><div class="actions"><button id="export-data" class="primary">Скачать резервную копию</button><button id="undo-import" disabled>Отменить последний импорт</button></div><p class="hint">Отмена доступна до следующего успешного импорта или сохранённого изменения записей/настроек. Поиск и просмотр её не отменяют.</p><hr><label class="file-label" for="import-file">Восстановить из JSON-файла<input id="import-file" type="file" accept=".json,application/json"></label><p class="storage-hint">Импорт полностью заменит текущие записи. Сначала файл будет проверен, затем появятся количество записей и подтверждение. Перед заменой рекомендуем скачать текущую копию.</p></section>
+    <section id="more-menu" class="menu-panel" hidden aria-label="Дополнительные разделы"><button data-section="archive">Архив</button><button data-section="help">Справка</button><button data-section="data">Данные и резервная копия</button></section>
+    <footer>Личный планировщик · Telegram <span>Сохранение в этом браузере</span></footer>
+  </main>
+
+  <dialog id="editor" aria-labelledby="editor-title">
+    <div class="dialog-header"><div><p class="eyebrow">ПУБЛИКАЦИЯ</p><h2 id="editor-title">Новая публикация</h2></div><button type="button" id="close-editor" aria-label="Закрыть форму">✕</button></div>
+    <form id="post-form" novalidate>
+      <div id="form-error" class="error" role="alert" hidden></div>
+      <label>Тема <span class="required">*</span><input name="title" id="title" required placeholder="О чём хотите рассказать?" aria-describedby="title-error"><span class="field-error" id="title-error"></span></label>
+      <div class="form-grid"><label>Плановая дата<input name="date" id="date" type="date"><small>Можно назначить позже</small></label><label>Время публикации<input name="time" id="time" type="time" disabled><small>Местное время устройства</small></label></div>
+      <label>Статус<select name="status" id="status"></select></label>
+      <div class="form-grid"><label>Рубрика<select name="category" id="category"></select></label><label>Формат<select name="format" id="format"></select></label></div>
+      <label>Заметки<textarea name="notes" id="notes" rows="3" placeholder="Мысли, идеи, что важно упомянуть…"></textarea></label>
+      <label>Черновик публикации<textarea name="body" id="body" rows="7" placeholder="Здесь можно написать текст поста…"></textarea></label>
+      <fieldset><legend>Ссылки и материалы</legend><p class="hint">Изображения и документы хранятся у вас. Добавьте ссылки на них.</p><div id="links"></div><button type="button" id="add-link" class="text-button">+ Добавить ссылку</button></fieldset>
+      <p id="draft-state" class="hint" role="status">Изменения применятся после сохранения.</p>
+      <div class="form-footer"><button type="button" id="cancel-editor">Отмена</button><button type="submit" class="primary">Сохранить</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="viewer" aria-labelledby="viewer-title"><div class="dialog-header"><h2 id="viewer-title"></h2><button id="close-viewer" aria-label="Закрыть публикацию">✕</button></div><div id="view-error" class="error" role="alert" hidden></div><div id="view-content"></div><div class="form-footer viewer-actions"><button id="change-date">Изменить дату</button><button id="change-status">Изменить статус</button><button id="edit-post" class="primary">Редактировать</button><button id="archive-post">В архив</button><button id="restore-post" hidden>Восстановить</button><button id="delete-post" class="danger" hidden>Удалить навсегда</button></div></dialog>
+  <dialog id="delete-dialog" aria-labelledby="delete-title"><h2 id="delete-title">Удалить запись навсегда?</h2><p id="delete-summary"></p><p>Восстановить запись после удаления будет нельзя.</p><div id="delete-error" class="error" role="alert" hidden></div><div class="form-footer"><button id="cancel-delete">Отмена</button><button id="confirm-delete" class="danger">Удалить навсегда</button></div></dialog>
+  <dialog id="change-dialog" aria-labelledby="change-title"><h2 id="change-title"></h2><p id="change-summary"></p><div id="change-error" class="error" role="alert" hidden></div><form id="change-form" novalidate><label id="change-date-label">Новая дата<input id="new-date" type="date"><small>Если убрать дату, запись вернётся в идеи без даты, а время очистится.</small></label><label id="change-status-label">Новый статус<select id="new-status"></select></label><div class="form-footer"><button type="button" id="cancel-change">Отмена</button><button type="submit" id="confirm-change" class="primary">Сохранить</button></div></form></dialog>
+  <dialog id="unsaved" aria-labelledby="unsaved-title"><h2 id="unsaved-title">Сохранить изменения?</h2><p>В форме есть несохранённый текст.</p><div class="choice-actions"><button id="keep-editing">Продолжить редактирование</button><button id="discard-edit">Закрыть без сохранения</button><button id="save-edit" class="primary">Сохранить</button></div></dialog>
+  <dialog id="demo-dialog" aria-labelledby="demo-title"><div class="dialog-header"><h2 id="demo-title">Пример публикации</h2><button id="close-demo" aria-label="Закрыть пример">✕</button></div><p class="hint">Демонстрационный материал. Он ещё не добавлен в ваш план.</p><div id="demo-content"></div><div id="demo-error" class="error" role="alert" hidden></div><div class="form-footer"><button id="add-demo" class="primary">Добавить пример в мой план</button></div></dialog>
+  <dialog id="import-dialog" aria-labelledby="import-title"><h2 id="import-title">Заменить текущий план?</h2><p id="import-summary"></p><p>Все текущие записи будут заменены содержимым файла, включая архив. Совпадающие записи не объединяются.</p><button id="export-before-import">Сначала скачать текущую копию</button><div id="import-error" class="error" role="alert" hidden></div><label id="no-undo-label" class="check-label" hidden><input id="allow-no-undo" type="checkbox">Я скачала текущую копию или принимаю замену без возможности отменить импорт</label><div class="form-footer"><button id="cancel-import">Отмена</button><button id="confirm-import" class="primary">Заменить данные</button></div></dialog>
+</body>
+</html>
